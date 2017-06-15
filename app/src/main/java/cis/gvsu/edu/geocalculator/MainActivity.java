@@ -2,6 +2,8 @@ package cis.gvsu.edu.geocalculator;
 
 import android.content.Context;
 import android.content.Intent;
+import android.os.Parcelable;
+import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.Menu;
@@ -13,16 +15,30 @@ import android.widget.TextView;
 import android.location.Location;
 import java.text.DecimalFormat;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
+
 import android.view.inputmethod.InputMethodManager;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.places.Places;
+import com.google.firebase.database.ChildEventListener;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+
 import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.ISODateTimeFormat;
+import org.parceler.Parcels;
 
-import cis.gvsu.edu.geocalculator.dummy.HistoryContent;
-
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements GoogleApiClient.OnConnectionFailedListener {
 
     public static int SETTINGS_RESULT = 1;
     public static int HISTORY_RESULT = 2;
+    public static int SEARCH_RESULT = 3;
 
     private String bearingUnits = "degrees";
     private String distanceUnits = "kilometers";
@@ -34,16 +50,25 @@ public class MainActivity extends AppCompatActivity {
     private TextView distance = null;
     private TextView bearing = null;
 
+    public static List<LocationLookup> allHistory;
+    DatabaseReference topRef;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.content_main);
-//        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
-//        setSupportActionBar(toolbar);
+
+        allHistory = new ArrayList<LocationLookup>();
+
+        GoogleApiClient apiClient = new GoogleApiClient.Builder(this)
+                .addApi(Places.GEO_DATA_API)
+                .addApi(Places.PLACE_DETECTION_API)
+                .enableAutoManage(this, this)
+                .build();
 
         Button clearButton = (Button)this.findViewById(R.id.clear);
         Button calcButton = (Button)this.findViewById(R.id.calc);
-//        Button settingsButton = (Button) this.findViewById(R.id.settings);
+        Button searchButton = (Button)this.findViewById(R.id.search_button);
 
         p1Lat = (EditText) this.findViewById(R.id.p1Lat);
         p1Lng = (EditText) this.findViewById(R.id.p1Lng);
@@ -51,17 +76,7 @@ public class MainActivity extends AppCompatActivity {
         p2Lng = (EditText) this.findViewById(R.id.p2Lng);
         distance = (TextView) this.findViewById(R.id.distance);
         bearing = (TextView) this.findViewById(R.id.bearing);
-/*
-        clearButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                p1Lat.getText().clear();
-                p1Lng.getText().clear();
-                p2Lat.getText().clear();
-                p2Lng.getText().clear();
-            }
-        });
- */
+
         clearButton.setOnClickListener(v -> {
             hideKeyboard();
             p1Lat.getText().clear();
@@ -72,14 +87,30 @@ public class MainActivity extends AppCompatActivity {
             bearing.setText("Bearing:");
         });
 
-//        settingsButton.setOnClickListener(v -> {
-//            Intent intent = new Intent(MainActivity.this, MySettingsActivity.class);
-//            startActivityForResult(intent, SETTINGS_RESULT );
-//        });
 
         calcButton.setOnClickListener(v -> {
             updateScreen();
         });
+
+        searchButton.setOnClickListener(v -> {
+            Intent locationSearch = new Intent(MainActivity.this, LocationSearchActivity.class);
+            startActivityForResult(locationSearch, SEARCH_RESULT);
+        });
+    }
+
+    @Override
+    public void onResume(){
+        super.onResume();
+        allHistory.clear();
+        topRef = FirebaseDatabase.getInstance().getReference("history");
+        topRef.addChildEventListener (chEvListener);
+        //topRef.addValueEventListener(valEvListener);
+    }
+
+    @Override
+    public void onPause(){
+        super.onPause();
+        topRef.removeEventListener(chEvListener);
     }
 
     private void updateScreen()
@@ -121,9 +152,20 @@ public class MainActivity extends AppCompatActivity {
             bearing.setText(bStr);
 
             // remember the calculation.
-            HistoryContent.HistoryItem item = new HistoryContent.HistoryItem(lat1.toString(),
-                    lng1.toString(), lat2.toString(), lng2.toString(), DateTime.now());
-            HistoryContent.addItem(item);
+//            HistoryContent.HistoryItem item = new HistoryContent.HistoryItem(lat1.toString(),
+//                    lng1.toString(), lat2.toString(), lng2.toString(), DateTime.now());
+//            HistoryContent.addItem(item);
+
+            LocationLookup entry = new LocationLookup();
+            entry.setOrigLat(lat1);
+            entry.setOrigLng(lng1);
+            entry.setDestLat(lat2);
+            entry.setDestLng(lng2);
+            DateTimeFormatter fmt = ISODateTimeFormat.dateTime();
+            entry.setTimestamp(fmt.print(DateTime.now()));
+            topRef.push().setValue(entry);
+
+
 
             hideKeyboard();
         } catch (Exception e) {
@@ -145,17 +187,31 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (resultCode == SETTINGS_RESULT) {
+        if (requestCode == SETTINGS_RESULT) {
             this.bearingUnits = data.getStringExtra("bearingUnits");
             this.distanceUnits = data.getStringExtra("distanceUnits");
             updateScreen();
-        } else if (resultCode == HISTORY_RESULT) {
-            String[] vals = data.getStringArrayExtra("item");
-            this.p1Lat.setText(vals[0]);
-            this.p1Lng.setText(vals[1]);
-            this.p2Lat.setText(vals[2]);
-            this.p2Lng.setText(vals[3]);
-            this.updateScreen();  // code that updates the calcs.
+        } else if (requestCode == HISTORY_RESULT) {
+            if (data != null && data.hasExtra("item")) {
+                Parcelable par = data.getParcelableExtra("item");
+                LocationLookup ll = Parcels.unwrap(par);
+                this.p1Lat.setText(Double.toString(ll.getOrigLat()));
+                this.p1Lng.setText(Double.toString(ll.getOrigLng()));
+                this.p2Lat.setText(Double.toString(ll.getDestLat()));
+                this.p2Lng.setText(Double.toString(ll.getDestLng()));
+                this.updateScreen();  // code that updates the calcs.
+            }
+        } else if (requestCode == SEARCH_RESULT) {
+            if (data != null && data.hasExtra("SEARCH_RESULTS")) {
+                Parcelable parcel = data.getParcelableExtra("SEARCH_RESULTS");
+                LocationLookup l = Parcels.unwrap(parcel);
+                //Log.d("MainACtivity", "New Trip: " + t.name);
+                this.p1Lat.setText(String.valueOf(l.origLat));
+                this.p1Lng.setText(String.valueOf(l.origLng));
+                this.p2Lat.setText(String.valueOf(l.destLat));
+                this.p2Lng.setText(String.valueOf(l.destLng));
+                this.updateScreen();
+            }
         }
     }
 
@@ -173,6 +229,9 @@ public class MainActivity extends AppCompatActivity {
             return true;
         } else if(item.getItemId() == R.id.action_history) {
             Intent intent = new Intent(MainActivity.this, HistoryActivity.class);
+//            Bundle bundle = new Bundle();
+//            //bundle.putParcelableArrayList("items",  allHistory);
+//            intent.putExtras(bundle);
             startActivityForResult(intent, HISTORY_RESULT );
             return true;
         }
@@ -180,4 +239,43 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
+    @Override
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+
+    }
+
+    private ChildEventListener chEvListener = new ChildEventListener() {
+        @Override
+        public void onChildAdded(DataSnapshot dataSnapshot, String s) {
+            LocationLookup entry = (LocationLookup) dataSnapshot.getValue(LocationLookup.class);
+            entry._key = dataSnapshot.getKey();
+            allHistory.add(entry);
+        }
+
+        @Override
+        public void onChildChanged(DataSnapshot dataSnapshot, String s) {
+        }
+
+        @Override
+        public void onChildRemoved(DataSnapshot dataSnapshot) {
+            LocationLookup entry = (LocationLookup) dataSnapshot.getValue(LocationLookup.class);
+            List<LocationLookup> newHistory = new ArrayList<LocationLookup>();
+            for (LocationLookup t : allHistory) {
+                if (!t._key.equals(dataSnapshot.getKey())) {
+                    newHistory.add(t);
+                }
+            }
+            allHistory = newHistory;
+        }
+
+        @Override
+        public void onChildMoved(DataSnapshot dataSnapshot, String s) {
+
+        }
+
+        @Override
+        public void onCancelled(DatabaseError databaseError) {
+
+        }
+    };
 }
