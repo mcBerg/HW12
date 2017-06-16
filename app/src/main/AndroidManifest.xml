@@ -12,6 +12,7 @@
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyB9XIftWKE1Yv-9pA2f8YCZeU2gYv2Ygbk" />
+
         <activity android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -36,6 +37,10 @@
                 android:name="android.support.PARENT_ACTIVITY"
                 android:value="cis.gvsu.edu.geocalculator.MainActivity" />
         </activity>
+
+        <service
+            android:name="cis.gvsu.edu.geocalculator.webservice.WeatherService"
+            android:exported="false"></service>
     </application>
 
 </manifest>

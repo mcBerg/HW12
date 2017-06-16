@@ -1,18 +1,24 @@
 package cis.gvsu.edu.geocalculator;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Parcelable;
 import android.support.annotation.NonNull;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.location.Location;
+
 import java.text.DecimalFormat;
 import java.math.RoundingMode;
 import java.util.ArrayList;
@@ -34,6 +40,10 @@ import org.joda.time.format.DateTimeFormatter;
 import org.joda.time.format.ISODateTimeFormat;
 import org.parceler.Parcels;
 
+import cis.gvsu.edu.geocalculator.webservice.WeatherService;
+
+import static cis.gvsu.edu.geocalculator.webservice.WeatherService.BROADCAST_WEATHER;
+
 public class MainActivity extends AppCompatActivity implements GoogleApiClient.OnConnectionFailedListener {
 
     public static int SETTINGS_RESULT = 1;
@@ -49,6 +59,13 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
     private EditText p2Lng = null;
     private TextView distance = null;
     private TextView bearing = null;
+
+    private ImageView p1Icon = null;
+    private ImageView p2Icon = null;
+    private TextView p1Summary = null;
+    private TextView p2Summary = null;
+    private TextView p1Temp = null;
+    private TextView p2Temp = null;
 
     public static List<LocationLookup> allHistory;
     DatabaseReference topRef;
@@ -66,9 +83,9 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
                 .enableAutoManage(this, this)
                 .build();
 
-        Button clearButton = (Button)this.findViewById(R.id.clear);
-        Button calcButton = (Button)this.findViewById(R.id.calc);
-        Button searchButton = (Button)this.findViewById(R.id.search_button);
+        Button clearButton = (Button) this.findViewById(R.id.clear);
+        Button calcButton = (Button) this.findViewById(R.id.calc);
+        Button searchButton = (Button) this.findViewById(R.id.search_button);
 
         p1Lat = (EditText) this.findViewById(R.id.p1Lat);
         p1Lng = (EditText) this.findViewById(R.id.p1Lng);
@@ -76,6 +93,13 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
         p2Lng = (EditText) this.findViewById(R.id.p2Lng);
         distance = (TextView) this.findViewById(R.id.distance);
         bearing = (TextView) this.findViewById(R.id.bearing);
+
+        p1Icon = (ImageView) this.findViewById(R.id.p1Icon);
+        p2Icon = (ImageView) this.findViewById(R.id.p2Icon);
+        p1Summary = (TextView) this.findViewById(R.id.p1Summary);
+        p2Summary = (TextView) this.findViewById(R.id.p2Summary);
+        p1Temp = (TextView) this.findViewById(R.id.p1Temp);
+        p2Temp = (TextView) this.findViewById(R.id.p2Temp);
 
         clearButton.setOnClickListener(v -> {
             hideKeyboard();
@@ -85,10 +109,13 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
             p2Lng.getText().clear();
             distance.setText("Distance:");
             bearing.setText("Bearing:");
+            setWeatherViews(View.INVISIBLE);
         });
 
 
         calcButton.setOnClickListener(v -> {
+            WeatherService.startGetWeather(this, p1Lat.getText().toString(), p1Lng.getText().toString(), "p1");
+            WeatherService.startGetWeather(this, p2Lat.getText().toString(), p2Lng.getText().toString(), "p2");
             updateScreen();
         });
 
@@ -99,22 +126,50 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
     }
 
     @Override
-    public void onResume(){
+    public void onResume() {
         super.onResume();
         allHistory.clear();
         topRef = FirebaseDatabase.getInstance().getReference("history");
-        topRef.addChildEventListener (chEvListener);
+        topRef.addChildEventListener(chEvListener);
+        IntentFilter weatherFilter = new IntentFilter(BROADCAST_WEATHER);
+        LocalBroadcastManager.getInstance(this).registerReceiver(weatherReceiver, weatherFilter);
+        setWeatherViews(View.INVISIBLE);
         //topRef.addValueEventListener(valEvListener);
     }
 
     @Override
-    public void onPause(){
+    public void onPause() {
         super.onPause();
         topRef.removeEventListener(chEvListener);
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(weatherReceiver);
     }
 
-    private void updateScreen()
-    {
+    private BroadcastReceiver weatherReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            //Log.d(TAG, "onReceive: " + intent);
+            Bundle bundle = intent.getExtras();
+            double temp = bundle.getDouble("TEMPERATURE");
+            String summary = bundle.getString("SUMMARY");
+            String icon = bundle.getString("ICON").replaceAll("-", "_");
+            String key = bundle.getString("KEY");
+            int resID = getResources().getIdentifier(icon, "drawable",
+                    getPackageName());
+            setWeatherViews(View.VISIBLE);
+            if (key.equals("p1")) {
+                p1Summary.setText(summary);
+                p1Temp.setText(Double.toString(temp));
+                p1Icon.setImageResource(resID);
+                p1Icon.setVisibility(View.INVISIBLE);
+            } else {
+                p2Summary.setText(summary);
+                p2Temp.setText(Double.toString(temp));
+                p2Icon.setImageResource(resID);
+            }
+        }
+    };
+
+    private void updateScreen() {
         try {
             Double lat1 = Double.parseDouble(p1Lat.getText().toString());
             Double lng1 = Double.parseDouble(p1Lng.getText().toString());
@@ -166,7 +221,6 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
             topRef.push().setValue(entry);
 
 
-
             hideKeyboard();
         } catch (Exception e) {
             return;
@@ -174,8 +228,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
 
     }
 
-    private void hideKeyboard()
-    {
+    private void hideKeyboard() {
         // Check if no view has focus:
         View view = this.getCurrentFocus();
         if (view != null) {
@@ -223,16 +276,16 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if(item.getItemId() == R.id.action_settings) {
+        if (item.getItemId() == R.id.action_settings) {
             Intent intent = new Intent(MainActivity.this, MySettingsActivity.class);
-            startActivityForResult(intent, SETTINGS_RESULT );
+            startActivityForResult(intent, SETTINGS_RESULT);
             return true;
-        } else if(item.getItemId() == R.id.action_history) {
+        } else if (item.getItemId() == R.id.action_history) {
             Intent intent = new Intent(MainActivity.this, HistoryActivity.class);
 //            Bundle bundle = new Bundle();
 //            //bundle.putParcelableArrayList("items",  allHistory);
 //            intent.putExtras(bundle);
-            startActivityForResult(intent, HISTORY_RESULT );
+            startActivityForResult(intent, HISTORY_RESULT);
             return true;
         }
         return false;
@@ -242,6 +295,15 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.O
     @Override
     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
 
+    }
+
+    private void setWeatherViews(int visible) {
+        p1Icon.setVisibility(visible);
+        p2Icon.setVisibility(visible);
+        p1Summary.setVisibility(visible);
+        p2Summary.setVisibility(visible);
+        p1Temp.setVisibility(visible);
+        p2Temp.setVisibility(visible);
     }
 
     private ChildEventListener chEvListener = new ChildEventListener() {
